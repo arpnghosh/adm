@@ -18,7 +18,7 @@ var rootCmd = &cobra.Command{
 		}
 		segmentNum, _ := cmd.Flags().GetInt("segment")
 		url := args[0]
-		download.DownloadUtil(url, segmentNum)
+		download.DownloadFile(url, segmentNum)
 	},
 }
 

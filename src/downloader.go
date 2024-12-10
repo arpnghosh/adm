@@ -105,7 +105,8 @@ func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url
 
 func mergeTempFiles(tempFiles []string, outputFile string) error {
 	out, err := os.Create(outputFile)
-	if err == nil {
+	buff := make([]byte, 1024*1024)
+	if err != nil {
 		return fmt.Errorf("error creating output file")
 	}
 	defer out.Close()
@@ -114,7 +115,7 @@ func mergeTempFiles(tempFiles []string, outputFile string) error {
 		if err != nil {
 			return fmt.Errorf("error opening temp file %s: %v", file, err)
 		}
-		_, err = io.Copy(out, f)
+		_, err = io.CopyBuffer(out, f, buff)
 		if err != nil {
 			return fmt.Errorf("error writing to output file from %s: %v", file, err)
 		}

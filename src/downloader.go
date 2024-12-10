@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"sync"
+
+	"github.com/schollz/progressbar/v3"
 )
 
 func DownloadFile(url string, segment int) {
@@ -27,7 +29,7 @@ func DownloadFile(url string, segment int) {
 		log.Fatal("Server does not support partial content download")
 		return
 	}
-	log.Printf("Server supports partial content download")
+	//	log.Printf("Server supports partial content download")
 
 	contentLength := resp.ContentLength
 	if contentLength <= 0 {
@@ -35,6 +37,11 @@ func DownloadFile(url string, segment int) {
 		return
 	}
 
+	bar := progressbar.DefaultBytes(
+		contentLength,
+		"Downloading",
+	)
+	var mu sync.Mutex // Mutex to protect the progress bar
 	contentType := resp.Header.Get("Content-Type")
 	mimeType, _ := mime.ExtensionsByType(contentType)
 	if len(mimeType) == 0 {
@@ -43,8 +50,8 @@ func DownloadFile(url string, segment int) {
 	}
 	fileExtension := mimeType[0]
 
-	log.Printf("content type: %v", contentType)
-	log.Printf("content length: %v", contentLength)
+	//	log.Printf("content type: %v", contentType)
+	//	log.Printf("content length: %v", contentLength)
 
 	var start int64
 	var wg sync.WaitGroup
@@ -58,7 +65,7 @@ func DownloadFile(url string, segment int) {
 		tempFile := fmt.Sprintf("segment_%d", i)
 		tempFiles = append(tempFiles, tempFile)
 		wg.Add(1)
-		go workerFunc(&wg, tempFile, start, end, url)
+		go workerFunc(&wg, tempFile, start, end, url, bar, &mu)
 	}
 	wg.Wait()
 
@@ -73,7 +80,19 @@ func validateResponse(res http.Response) bool {
 	return res.StatusCode == http.StatusOK || res.Header.Get("Accept-Ranges") == "bytes"
 }
 
-func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url string) {
+type ProgressBarWriter struct {
+	bar *progressbar.ProgressBar
+	mu  *sync.Mutex
+}
+
+func (pw *ProgressBarWriter) Write(p []byte) (n int, err error) {
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
+	n, err = pw.bar.Write(p)
+	return n, err
+}
+
+func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url string, bar *progressbar.ProgressBar, mu *sync.Mutex) {
 	defer wg.Done()
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", url, nil)
@@ -97,7 +116,12 @@ func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url
 	}
 	defer file.Close()
 
-	_, err = io.Copy(file, res.Body)
+	progressWriter := io.MultiWriter(file, &ProgressBarWriter{
+		bar: bar,
+		mu:  mu,
+	})
+
+	_, err = io.Copy(progressWriter, res.Body)
 	if err != nil {
 		log.Printf("Error writing to temp file %s: %v", tempFile, err)
 	}

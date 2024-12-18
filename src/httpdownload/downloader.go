@@ -1,15 +1,15 @@
-package download
+package httpdownload
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
-	"mime"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
-
-	"github.com/schollz/progressbar/v3"
+	//	"github.com/schollz/progressbar/v3"
 )
 
 func DownloadFile(url string, segment int) {
@@ -29,7 +29,7 @@ func DownloadFile(url string, segment int) {
 		log.Fatal("Server does not support partial content download")
 		return
 	}
-	//	log.Printf("Server supports partial content download")
+	log.Printf("Server supports partial content download")
 
 	contentLength := resp.ContentLength
 	if contentLength <= 0 {
@@ -37,21 +37,20 @@ func DownloadFile(url string, segment int) {
 		return
 	}
 
-	bar := progressbar.DefaultBytes(
-		contentLength,
-		"Downloading",
-	)
-	var mu sync.Mutex // Mutex to protect the progress bar
-	contentType := resp.Header.Get("Content-Type")
-	mimeType, _ := mime.ExtensionsByType(contentType)
-	if len(mimeType) == 0 {
-		log.Fatal("unable to determine file extension")
-		return
-	}
-	fileExtension := mimeType[0]
+	//	bar := progressbar.DefaultBytes(
+	//		contentLength,
+	//		"Downloading",
+	//	)
+	//	var mu sync.Mutex // Mutex to protect the progress bar
 
-	//	log.Printf("content type: %v", contentType)
-	//	log.Printf("content length: %v", contentLength)
+	contentType := resp.Header.Get("Content-Type")
+	fileExtension, err := findFileExtension(contentType)
+	if err != nil {
+		log.Fatalf("Error %v", err)
+	}
+
+	log.Printf("content type: %v", contentType)
+	log.Printf("content length: %v", contentLength)
 
 	var start int64
 	var wg sync.WaitGroup
@@ -65,11 +64,11 @@ func DownloadFile(url string, segment int) {
 		tempFile := fmt.Sprintf("segment_%d", i)
 		tempFiles = append(tempFiles, tempFile)
 		wg.Add(1)
-		go workerFunc(&wg, tempFile, start, end, url, bar, &mu)
+		go workerFunc(&wg, tempFile, start, end, url)
 	}
 	wg.Wait()
 
-	err = mergeTempFiles(tempFiles, fmt.Sprintf("output%s", fileExtension))
+	err = mergeTempFiles(tempFiles, fmt.Sprintf("output.%s", fileExtension))
 	if err != nil {
 		log.Printf("Failed to merge temporary files: %v", err)
 		return
@@ -80,19 +79,19 @@ func validateResponse(res http.Response) bool {
 	return res.StatusCode == http.StatusOK || res.Header.Get("Accept-Ranges") == "bytes"
 }
 
-type ProgressBarWriter struct {
-	bar *progressbar.ProgressBar
-	mu  *sync.Mutex
-}
+//type ProgressBarWriter struct {
+//	bar *progressbar.ProgressBar
+//	mu  *sync.Mutex
+//}
 
-func (pw *ProgressBarWriter) Write(p []byte) (n int, err error) {
-	pw.mu.Lock()
-	defer pw.mu.Unlock()
-	n, err = pw.bar.Write(p)
-	return n, err
-}
+//func (pw *ProgressBarWriter) Write(p []byte) (n int, err error) {
+//	pw.mu.Lock()
+//	defer pw.mu.Unlock()
+//	n, err = pw.bar.Write(p)
+//	return n, err
+//}
 
-func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url string, bar *progressbar.ProgressBar, mu *sync.Mutex) {
+func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url string) {
 	defer wg.Done()
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", url, nil)
@@ -116,12 +115,12 @@ func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url
 	}
 	defer file.Close()
 
-	progressWriter := io.MultiWriter(file, &ProgressBarWriter{
-		bar: bar,
-		mu:  mu,
-	})
+	//	progressWriter := io.MultiWriter(file, &ProgressBarWriter{
+	//		bar: bar,
+	//		mu:  mu,
+	//	})
 
-	_, err = io.Copy(progressWriter, res.Body)
+	_, err = io.Copy(file, res.Body)
 	if err != nil {
 		log.Printf("Error writing to temp file %s: %v", tempFile, err)
 	}
@@ -129,7 +128,6 @@ func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url
 
 func mergeTempFiles(tempFiles []string, outputFile string) error {
 	out, err := os.Create(outputFile)
-	buff := make([]byte, 1024*1024)
 	if err != nil {
 		return fmt.Errorf("error creating output file")
 	}
@@ -139,7 +137,7 @@ func mergeTempFiles(tempFiles []string, outputFile string) error {
 		if err != nil {
 			return fmt.Errorf("error opening temp file %s: %v", file, err)
 		}
-		_, err = io.CopyBuffer(out, f, buff)
+		_, err = io.Copy(out, f)
 		if err != nil {
 			return fmt.Errorf("error writing to output file from %s: %v", file, err)
 		}
@@ -155,4 +153,12 @@ func cleanupTempFiles(tempFiles []string) {
 			log.Printf("Failed to remove temp file %s: %v", f, err)
 		}
 	}
+}
+
+func findFileExtension(contentType string) (string, error) {
+	parts := strings.Split(contentType, "/")
+	if len(parts) != 2 {
+		return "", errors.New("invalid content type format")
+	}
+	return parts[1], nil
 }

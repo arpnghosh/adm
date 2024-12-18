@@ -3,7 +3,7 @@ package cmd
 import (
 	"os"
 
-	download "github.com/arpnghosh/adm/src"
+	"github.com/arpnghosh/adm/src/parser"
 	"github.com/spf13/cobra"
 )
 
@@ -18,7 +18,7 @@ var rootCmd = &cobra.Command{
 		}
 		segmentNum, _ := cmd.Flags().GetInt("segment")
 		url := args[0]
-		download.DownloadFile(url, segmentNum)
+		parser.ParseProtocol(url, segmentNum)
 	},
 }
 

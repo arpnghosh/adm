@@ -13,12 +13,12 @@ func ParseProtocol(rawURL string, segment int) error {
 	if err != nil {
 		return err
 	}
-	// maybe use a switch-case ???
-	if parsedURL.Scheme == "https" || parsedURL.Scheme == "http" {
+	switch parsedURL.Scheme {
+	case "https", "http":
 		httpdownload.DownloadFile(rawURL, segment)
-	} else if parsedURL.Scheme == "ftp" {
+	case "ftp":
 		ftpdownload.DownloadFile(rawURL, parsedURL, segment)
-	} else {
+	default:
 		log.Fatal("unsupported network protocol")
 	}
 	return nil

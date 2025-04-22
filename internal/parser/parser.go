@@ -4,8 +4,8 @@ import (
 	"log"
 	"net/url"
 
-	"github.com/arpnghosh/adm/src/ftpdownload"
-	"github.com/arpnghosh/adm/src/httpdownload"
+	"github.com/arpnghosh/adm/internal/downloader/ftp"
+	"github.com/arpnghosh/adm/internal/downloader/http"
 )
 
 func ParseProtocol(rawURL string, segment int) error {

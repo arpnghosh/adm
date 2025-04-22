@@ -3,7 +3,7 @@ package cmd
 import (
 	"os"
 
-	"github.com/arpnghosh/adm/src/parser"
+	"github.com/arpnghosh/adm/internal/parser"
 	"github.com/spf13/cobra"
 )
 

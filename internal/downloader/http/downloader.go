@@ -44,6 +44,7 @@ func DownloadFile(url string, segment int) {
 	//	var mu sync.Mutex // Mutex to protect the progress bar
 
 	contentType := resp.Header.Get("Content-Type")
+	log.Printf(contentType)
 	fileExtension, err := findFileExtension(contentType)
 	if err != nil {
 		log.Fatalf("Error %v", err)
@@ -55,7 +56,7 @@ func DownloadFile(url string, segment int) {
 	var start int64
 	var wg sync.WaitGroup
 	segmentSize := contentLength / int64(segment)
-	for i := 0; i < segment; i++ {
+	for i := range segment {
 		start = int64(i) * segmentSize
 		end := start + segmentSize - 1
 		if i == segment-1 {

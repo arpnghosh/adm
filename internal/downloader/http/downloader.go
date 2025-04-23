@@ -1,14 +1,14 @@
 package httpdownload
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
+
+	"github.com/h2non/filetype"
 	//	"github.com/schollz/progressbar/v3"
 )
 
@@ -43,14 +43,11 @@ func DownloadFile(url string, segment int) {
 	//	)
 	//	var mu sync.Mutex // Mutex to protect the progress bar
 
-	contentType := resp.Header.Get("Content-Type")
-	log.Printf(contentType)
-	fileExtension, err := findFileExtension(contentType)
+	fileExtension, err := inferFiletype(url)
 	if err != nil {
 		log.Fatalf("Error %v", err)
 	}
-
-	log.Printf("content type: %v", contentType)
+	log.Printf(fileExtension)
 	log.Printf("content length: %v", contentLength)
 
 	var start int64
@@ -156,10 +153,19 @@ func cleanupTempFiles(tempFiles []string) {
 	}
 }
 
-func findFileExtension(contentType string) (string, error) {
-	parts := strings.Split(contentType, "/")
-	if len(parts) != 2 {
-		return "", errors.New("invalid content type format")
+func inferFiletype(url string) (string, error) {
+	buff := make([]byte, 250)
+	resp, err := http.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("Error while making a get request")
 	}
-	return parts[1], nil
+	_, er := io.ReadFull(resp.Body, buff)
+	if er != nil {
+		return "", fmt.Errorf("Error while reading response bytes")
+	}
+	kind, _ := filetype.Match(buff)
+	if kind == filetype.Unknown {
+		return "", fmt.Errorf("unknown filetype")
+	}
+	return kind.Extension, nil
 }

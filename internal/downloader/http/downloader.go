@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/h2non/filetype"
-	//	"github.com/schollz/progressbar/v3"
 )
 
 func DownloadFile(url string, segment int) {
@@ -23,8 +22,11 @@ func DownloadFile(url string, segment int) {
 		log.Fatal("Error while making a Head request", err)
 		return
 	}
+
 	defer resp.Body.Close()
+
 	isValid := validateResponse(*resp)
+
 	if !isValid {
 		log.Fatal("Server does not support partial content download")
 		return
@@ -37,17 +39,6 @@ func DownloadFile(url string, segment int) {
 		return
 	}
 
-	//	bar := progressbar.DefaultBytes(
-	//		contentLength,
-	//		"Downloading",
-	//	)
-	//	var mu sync.Mutex // Mutex to protect the progress bar
-
-	fileExtension, err := inferFiletype(url)
-	if err != nil {
-		log.Fatalf("Error %v", err)
-	}
-	log.Printf(fileExtension)
 	log.Printf("content length: %v", contentLength)
 
 	var start int64
@@ -66,6 +57,14 @@ func DownloadFile(url string, segment int) {
 	}
 	wg.Wait()
 
+	fileExtension, err := inferFiletypeFromSegment("segment_0")
+
+	if err != nil {
+		log.Fatal("failed to infer file type")
+	}
+
+	log.Printf(fileExtension)
+
 	err = mergeTempFiles(tempFiles, fmt.Sprintf("output.%s", fileExtension))
 	if err != nil {
 		log.Printf("Failed to merge temporary files: %v", err)
@@ -76,18 +75,6 @@ func DownloadFile(url string, segment int) {
 func validateResponse(res http.Response) bool {
 	return res.StatusCode == http.StatusOK || res.Header.Get("Accept-Ranges") == "bytes"
 }
-
-//type ProgressBarWriter struct {
-//	bar *progressbar.ProgressBar
-//	mu  *sync.Mutex
-//}
-
-//func (pw *ProgressBarWriter) Write(p []byte) (n int, err error) {
-//	pw.mu.Lock()
-//	defer pw.mu.Unlock()
-//	n, err = pw.bar.Write(p)
-//	return n, err
-//}
 
 func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url string) {
 	defer wg.Done()
@@ -112,11 +99,6 @@ func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url
 		return
 	}
 	defer file.Close()
-
-	//	progressWriter := io.MultiWriter(file, &ProgressBarWriter{
-	//		bar: bar,
-	//		mu:  mu,
-	//	})
 
 	_, err = io.Copy(file, res.Body)
 	if err != nil {
@@ -153,16 +135,19 @@ func cleanupTempFiles(tempFiles []string) {
 	}
 }
 
-func inferFiletype(url string) (string, error) {
-	buff := make([]byte, 250)
-	resp, err := http.Get(url)
+func inferFiletypeFromSegment(segmentPath string) (string, error) {
+	file, err := os.Open(segmentPath)
 	if err != nil {
-		return "", fmt.Errorf("Error while making a get request")
+		return "", err
 	}
-	_, er := io.ReadFull(resp.Body, buff)
-	if er != nil {
-		return "", fmt.Errorf("Error while reading response bytes")
+	defer file.Close()
+
+	buff := make([]byte, 250)
+	_, err = io.ReadFull(file, buff)
+	if err != nil {
+		return "", err
 	}
+
 	kind, _ := filetype.Match(buff)
 	if kind == filetype.Unknown {
 		return "", fmt.Errorf("unknown filetype")

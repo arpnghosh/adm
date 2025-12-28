@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/arpnghosh/adm/internal/parser"
@@ -11,30 +12,29 @@ var rootCmd = &cobra.Command{
 	Use:   "adm [url]",
 	Short: "A CLI tool for downloading files",
 	Long:  "A CLI tool that allows parallel downloads using a segment option.",
-	Run: func(cmd *cobra.Command, args []string) {
-		if len(args) < 1 {
-			cmd.Help()
-			os.Exit(1)
-		}
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
 		segmentNum, _ := cmd.Flags().GetInt("segment")
+
+		if segmentNum < 1 || segmentNum > 16 {
+			return fmt.Errorf("the number of segments must be between 1 and 16")
+		}
+
 		url := args[0]
-		parser.ParseProtocol(url, segmentNum)
+		if err := parser.ParseProtocol(url, segmentNum); err != nil {
+			return fmt.Errorf("%w", err)
+		}
+
+		return nil
 	},
 }
 
 func Execute() {
-	if len(os.Args) == 1 || len(os.Args) > 4 {
-		rootCmd.Help()
+	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
-	} else {
-		err := rootCmd.Execute()
-		if err != nil {
-			os.Exit(1)
-		}
 	}
 }
 
 func init() {
-	var segment int
-	rootCmd.Flags().IntVarP(&segment, "segment", "s", 4, "Number of segments for parallel download")
+	rootCmd.Flags().IntP("segment", "s", 4, "Number of segments for parallel downloads")
 }

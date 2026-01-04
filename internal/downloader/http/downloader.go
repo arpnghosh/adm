@@ -1,13 +1,16 @@
 package httpdownload
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"mime"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -16,10 +19,10 @@ type workerChanInfo struct {
 	err     error
 	start   int64
 	end     int64
+	ctx     context.Context
 }
 
 func DownloadFile(url string, segment int) error {
-
 	errorChannel := make(chan workerChanInfo, segment)
 
 	resp, err := http.Head(url)
@@ -50,6 +53,16 @@ func DownloadFile(url string, segment int) error {
 		cleanupTempFiles(tempFiles)
 	}()
 
+	ctx, cancel := context.WithCancel(context.Background())
+
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-signalChan
+		cancel()
+	}()
+
 	for i := range segment {
 		start = int64(i) * segmentSize
 		end := start + segmentSize - 1
@@ -59,7 +72,7 @@ func DownloadFile(url string, segment int) error {
 		tempFile := fmt.Sprintf("segment_%d", i)
 		tempFiles[i] = tempFile
 		wg.Add(1)
-		go workerFunc(&wg, tempFile, start, end, url, errorChannel)
+		go workerFunc(&wg, ctx, tempFile, start, end, url, errorChannel)
 	}
 	wg.Wait()
 
@@ -74,12 +87,14 @@ func DownloadFile(url string, segment int) error {
 
 		go func(r workerChanInfo) {
 			defer retryWaitGroup.Done()
-			if err = retryWithBackoff(r.segment, r.start, r.end, url, 5); err != nil {
-				mu.Lock()
-				if firstError == nil {
-					firstError = err
+			if r.err != context.Canceled && r.err != nil {
+				if retryErr := retryWithBackoff(r.segment, r.ctx, r.start, r.end, url, 5); retryErr != nil {
+					mu.Lock()
+					if firstError == nil {
+						firstError = retryErr
+					}
+					mu.Unlock()
 				}
-				mu.Unlock()
 			}
 		}(returnedError)
 	}
@@ -115,8 +130,7 @@ func validateResponse(res http.Response) bool {
 	return true
 }
 
-func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url string, errorChannel chan workerChanInfo) {
-
+func workerFunc(wg *sync.WaitGroup, ctx context.Context, tempFile string, start int64, end int64, url string, errorChannel chan workerChanInfo) {
 	if wg != nil {
 		defer wg.Done()
 	}
@@ -127,11 +141,19 @@ func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url
 			err:     err,
 			start:   start,
 			end:     end,
+			ctx:     ctx,
 		}
 	}
 
+	select {
+	case <-ctx.Done():
+		sendError(ctx.Err())
+		return
+	default:
+	}
+
 	client := &http.Client{}
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		sendError(err)
 		return
@@ -165,12 +187,19 @@ func workerFunc(wg *sync.WaitGroup, tempFile string, start int64, end int64, url
 	}
 }
 
-func retryWithBackoff(temp string, start int64, end int64, url string, maxRetries int) error {
+func retryWithBackoff(temp string, ctx context.Context, start int64, end int64, url string, maxRetries int) error {
 	backoff := time.Duration(1) * time.Second
 
 	for attempt := range maxRetries {
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("segment %s cancelled", temp)
+		default:
+		}
+
 		errorChannel := make(chan workerChanInfo, 1)
-		workerFunc(nil, temp, start, end, url, errorChannel)
+		workerFunc(nil, ctx, temp, start, end, url, errorChannel)
 		close(errorChannel)
 
 		result := <-errorChannel

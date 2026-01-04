@@ -2,6 +2,7 @@ package httpdownload
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +13,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/schollz/progressbar/v3"
 )
 
 type workerChanInfo struct {
@@ -21,6 +24,8 @@ type workerChanInfo struct {
 	end     int64
 	ctx     context.Context
 }
+
+var devMode bool = false
 
 func DownloadFile(url string, segment int) error {
 	errorChannel := make(chan workerChanInfo, segment)
@@ -35,14 +40,32 @@ func DownloadFile(url string, segment int) error {
 	if isValid := validateResponse(*resp); !isValid {
 		return fmt.Errorf("Server does not support partial content download")
 	}
-	log.Printf("Server supports partial content download")
+	if devMode {
+		log.Printf("Server supports partial content download")
+	}
 
 	contentLength := resp.ContentLength
 	if contentLength <= 0 {
 		return fmt.Errorf("content length is invalid or missing")
 	}
 
-	log.Printf("content length: %v", contentLength)
+	if devMode {
+		log.Printf("content length: %v", contentLength)
+	}
+
+	bar := progressbar.NewOptions64(
+		contentLength,
+		progressbar.OptionSetDescription("Download Progress"),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetWidth(30),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "=",
+			SaucerHead:    ">",
+			SaucerPadding: " ",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+	)
 
 	var start int64
 	var wg sync.WaitGroup
@@ -50,6 +73,7 @@ func DownloadFile(url string, segment int) error {
 	tempFiles := make([]string, segment)
 
 	defer func() {
+		bar.Close()
 		cleanupTempFiles(tempFiles)
 	}()
 
@@ -71,8 +95,9 @@ func DownloadFile(url string, segment int) error {
 		}
 		tempFile := fmt.Sprintf("segment_%d", i)
 		tempFiles[i] = tempFile
+
 		wg.Add(1)
-		go workerFunc(&wg, ctx, tempFile, start, end, url, errorChannel)
+		go workerFunc(&wg, ctx, tempFile, start, end, url, errorChannel, bar)
 	}
 	wg.Wait()
 
@@ -87,8 +112,14 @@ func DownloadFile(url string, segment int) error {
 
 		go func(r workerChanInfo) {
 			defer retryWaitGroup.Done()
-			if r.err != context.Canceled && r.err != nil {
-				if retryErr := retryWithBackoff(r.segment, r.ctx, r.start, r.end, url, 5); retryErr != nil {
+			if errors.Is(r.err, context.Canceled) {
+				mu.Lock()
+				if firstError == nil {
+					firstError = fmt.Errorf("segment %s cancelled", r.segment)
+				}
+				mu.Unlock()
+			} else if r.err != nil {
+				if retryErr := retryWithBackoff(r.segment, r.ctx, r.start, r.end, url, 5, bar); retryErr != nil {
 					mu.Lock()
 					if firstError == nil {
 						firstError = retryErr
@@ -110,13 +141,16 @@ func DownloadFile(url string, segment int) error {
 		return fmt.Errorf("failed to infer file type")
 	}
 
-	log.Printf("File Extension: %v", fileExtension)
+	if devMode {
+		log.Printf("File Extension: %v", fileExtension)
+	}
 
-	err = mergeTempFiles(tempFiles, fmt.Sprintf("output.%s", fileExtension))
+	outputFileName := fmt.Sprintf("output.%s", fileExtension)
+	err = mergeTempFiles(tempFiles, outputFileName)
 	if err != nil {
 		return fmt.Errorf("Failed to merge temporary files: %v", err)
 	}
-	log.Printf("File Downloaded")
+	fmt.Printf("\n✓ Download complete! File saved as: %s\n", outputFileName)
 	return nil
 }
 
@@ -130,7 +164,7 @@ func validateResponse(res http.Response) bool {
 	return true
 }
 
-func workerFunc(wg *sync.WaitGroup, ctx context.Context, tempFile string, start int64, end int64, url string, errorChannel chan workerChanInfo) {
+func workerFunc(wg *sync.WaitGroup, ctx context.Context, tempFile string, start int64, end int64, url string, errorChannel chan workerChanInfo, bar *progressbar.ProgressBar) {
 	if wg != nil {
 		defer wg.Done()
 	}
@@ -180,14 +214,15 @@ func workerFunc(wg *sync.WaitGroup, ctx context.Context, tempFile string, start 
 	}
 	defer file.Close()
 
-	_, err = io.Copy(file, res.Body)
+	multiWriter := io.MultiWriter(file, bar)
+	_, err = io.Copy(multiWriter, res.Body)
 	if err != nil {
 		sendError(err)
 		return
 	}
 }
 
-func retryWithBackoff(temp string, ctx context.Context, start int64, end int64, url string, maxRetries int) error {
+func retryWithBackoff(temp string, ctx context.Context, start int64, end int64, url string, maxRetries int, bar *progressbar.ProgressBar) error {
 	backoff := time.Duration(1) * time.Second
 
 	for attempt := range maxRetries {
@@ -199,7 +234,10 @@ func retryWithBackoff(temp string, ctx context.Context, start int64, end int64, 
 		}
 
 		errorChannel := make(chan workerChanInfo, 1)
-		workerFunc(nil, ctx, temp, start, end, url, errorChannel)
+		if devMode {
+			log.Printf("Retrying segment %s (attempt %d/%d)", temp, attempt+1, maxRetries)
+		}
+		workerFunc(nil, ctx, temp, start, end, url, errorChannel, bar)
 		close(errorChannel)
 
 		result := <-errorChannel
@@ -207,7 +245,9 @@ func retryWithBackoff(temp string, ctx context.Context, start int64, end int64, 
 		if result.err == nil {
 			return nil
 		} else {
-			log.Printf("Segment %s failed, retrying in %v (attempt %d/%d)", temp, backoff, attempt+1, maxRetries)
+			if devMode {
+				log.Printf("Segment %s failed, retrying in %v (attempt %d/%d)", temp, backoff, attempt+1, maxRetries)
+			}
 			time.Sleep(backoff)
 			backoff *= 2
 		}
@@ -244,7 +284,7 @@ func cleanupTempFiles(tempFiles []string) {
 func inferFiletypeFromSegment(segmentPath string) (string, error) {
 	file, err := os.Open(segmentPath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w", err)
 	}
 	defer file.Close()
 
@@ -254,7 +294,7 @@ func inferFiletypeFromSegment(segmentPath string) (string, error) {
 
 	_, err = io.ReadAtLeast(file, buff, 1)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return "", err
+		return "", fmt.Errorf("%w", err)
 	}
 
 	mimeType := http.DetectContentType(buff)

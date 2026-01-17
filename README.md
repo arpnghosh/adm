@@ -18,6 +18,11 @@ Or install directly:
 go install github.com/arpnghosh/adm@latest
 ```
 
+### Options
+
+- `-s, --segment` - Number of segments for parallel download (default: 4)
+- `-o, --output` - Output filename for the downloaded file
+
 ### Usage
 
 #### Basic Download
@@ -26,26 +31,24 @@ go install github.com/arpnghosh/adm@latest
 adm <URL>
 ```
 
-#### With Custom Segments
+#### With optional segment count flag
 
 ```bash
 adm -s <number> <URL>
 adm --segment <number> <URL>
 ```
 
-### Examples
-
-Download a file with default 4 segments:
+#### With optional output filename flag
 
 ```bash
-adm https://example.com/file.zip
+adm -o <filename> <URL>
+adm --output <filename> <URL>
 ```
 
-Download a file using 8 parallel segments:
-
+#### With both flags
 ```bash
-adm -s 8 https://example.com/file.zip
-adm --segment 8 https://example.com/file.zip
+adm -s <number> -o <filename> <URL>
+adm --segment <number> --output <filename> <URL>
 ```
 
 ### Options

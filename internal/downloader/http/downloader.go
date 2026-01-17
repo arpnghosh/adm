@@ -27,18 +27,18 @@ type workerChanInfo struct {
 
 var devMode bool = false
 
-func DownloadFile(url string, segment int) error {
+func DownloadFile(url string, segment int, filename string) error {
 	errorChannel := make(chan workerChanInfo, segment)
 
 	resp, err := http.Head(url)
 	if err != nil {
-		return fmt.Errorf("Error while making a Head request %w", err)
+		return fmt.Errorf("error while making a Head request %w", err)
 	}
 
 	defer resp.Body.Close()
 
 	if isValid := validateResponse(*resp); !isValid {
-		return fmt.Errorf("Server does not support partial content download")
+		return fmt.Errorf("server does not support partial content download")
 	}
 	if devMode {
 		log.Printf("Server supports partial content download")
@@ -93,7 +93,7 @@ func DownloadFile(url string, segment int) error {
 		if i == segment-1 {
 			end = contentLength - 1
 		}
-		tempFile := fmt.Sprintf("segment_%d", i)
+		tempFile := fmt.Sprintf("%s_segment_%d",filename, i)
 		tempFiles[i] = tempFile
 
 		wg.Add(1)
@@ -136,7 +136,8 @@ func DownloadFile(url string, segment int) error {
 		return firstError
 	}
 
-	fileExtension, err := inferFiletypeFromSegment("segment_0")
+	extInferSegmentPath := fmt.Sprintf("%s_segment_%d", filename, 0)
+	fileExtension, err := inferFiletypeFromSegment(extInferSegmentPath)
 	if err != nil {
 		return fmt.Errorf("failed to infer file type")
 	}
@@ -145,10 +146,10 @@ func DownloadFile(url string, segment int) error {
 		log.Printf("File Extension: %v", fileExtension)
 	}
 
-	outputFileName := fmt.Sprintf("output.%s", fileExtension)
+	outputFileName := fmt.Sprintf("%s.%s",filename, fileExtension)
 	err = mergeTempFiles(tempFiles, outputFileName)
 	if err != nil {
-		return fmt.Errorf("Failed to merge temporary files: %v", err)
+		return fmt.Errorf("failed to merge temporary files: %v", err)
 	}
 	fmt.Printf("\n✓ Download complete! File saved as: %s\n", outputFileName)
 	return nil
@@ -201,7 +202,7 @@ func workerFunc(wg *sync.WaitGroup, ctx context.Context, tempFile string, start 
 	}
 
 	if res.StatusCode != http.StatusPartialContent {
-		sendError(fmt.Errorf("Server does not support partial content download"))
+		sendError(fmt.Errorf("server does not support partial content download"))
 		return
 	}
 

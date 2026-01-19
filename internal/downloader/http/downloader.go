@@ -37,11 +37,18 @@ func DownloadFile(url string, segment int, filename string) error {
 
 	defer resp.Body.Close()
 
-	if isValid := validateResponse(*resp); !isValid {
-		return fmt.Errorf("server does not support partial content download")
+	valiRes, err := validateResponse(*resp, url)
+
+	if err != nil {
+		return fmt.Errorf("failed to validate URL %s: %w", url, err)
 	}
-	if devMode {
-		log.Printf("Server supports partial content download")
+
+	if !valiRes.isValid {
+		return fmt.Errorf("URL %s is not reachable or returned status %d", url, resp.StatusCode)
+	}
+
+	if valiRes.isValid && valiRes.isSingle {
+		segment = 1 // fallback to single thread download
 	}
 
 	contentLength := resp.ContentLength
@@ -93,7 +100,7 @@ func DownloadFile(url string, segment int, filename string) error {
 		if i == segment-1 {
 			end = contentLength - 1
 		}
-		tempFile := fmt.Sprintf("%s_segment_%d",filename, i)
+		tempFile := fmt.Sprintf("%s_segment_%d", filename, i)
 		tempFiles[i] = tempFile
 
 		wg.Add(1)
@@ -146,7 +153,7 @@ func DownloadFile(url string, segment int, filename string) error {
 		log.Printf("File Extension: %v", fileExtension)
 	}
 
-	outputFileName := fmt.Sprintf("%s.%s",filename, fileExtension)
+	outputFileName := fmt.Sprintf("%s.%s", filename, fileExtension)
 	err = mergeTempFiles(tempFiles, outputFileName)
 	if err != nil {
 		return fmt.Errorf("failed to merge temporary files: %v", err)
@@ -155,14 +162,38 @@ func DownloadFile(url string, segment int, filename string) error {
 	return nil
 }
 
-func validateResponse(res http.Response) bool {
+type responseInfo struct {
+	isValid   bool
+	isPartial bool
+	isSingle  bool
+}
+
+func validateResponse(res http.Response, url string) (*responseInfo, error) {
+	result := &responseInfo{}
 	if res.StatusCode != http.StatusOK {
-		return false
+		result.isValid = false
+		return result, nil
 	}
-	if res.Header.Get("Accept-Ranges") != "bytes" {
-		return false
+	result.isValid = true
+
+	// if strings.ToLower(res.Header.Get("Accept-Ranges")) == "bytes" {
+	// 	result.isPartial = true
+	// 	return result
+	// }
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Range", "bytes=0-0")
+	rsp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return result, err
 	}
-	return true
+
+	if rsp.StatusCode == http.StatusPartialContent {
+		result.isPartial = true
+	} else {
+		result.isSingle = true
+	}
+
+	return result, nil
 }
 
 func workerFunc(wg *sync.WaitGroup, ctx context.Context, tempFile string, start int64, end int64, url string, errorChannel chan workerChanInfo, bar *progressbar.ProgressBar) {

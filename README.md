@@ -50,8 +50,3 @@ adm --output <filename> <URL>
 adm -s <number> -o <filename> <URL>
 adm --segment <number> --output <filename> <URL>
 ```
-
-### Options
-
-- `-s, --segment` - Number of segments for parallel download (default: 4)
-

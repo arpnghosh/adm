@@ -1,52 +1,41 @@
 ## adm
 
-a command-line file download accelerator with support for concurrent segmented downloads.
+adm is a CLI utility for downloading files from the internet. Currently, it only supports HTTP and HTTPS.
 
-### Installation
+## Prerequisites
 
-install from source
+- [Go](https://go.dev/dl/) 1.23 or later
 
-```bash
-git clone https://github.com/arpnghosh/adm.git
-cd adm
-go build -o adm main.go
-```
-
-Or install directly:
+## Installation
 
 ```bash
 go install github.com/arpnghosh/adm@latest
 ```
 
-### Options
-
-- `-s, --segment` - Number of segments for parallel download (default: 4)
-- `-o, --output` - Output filename for the downloaded file
-
-### Usage
-
-#### Basic Download
+Or build from source:
 
 ```bash
-adm <URL>
+git clone https://github.com/arpnghosh/adm.git
+cd adm
+go build -o adm .
+./adm  # Run the binary
+sudo mv adm /usr/local/bin/  # Optional: install system-wide
 ```
 
-#### With optional segment count flag
+## Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-s, --segment` | Parallel segment count (1-16) | 4 |
+| `-o, --output` | Output filename (extension auto-detected) | From URL |
+
+
+## Usage
 
 ```bash
-adm -s <number> <URL>
-adm --segment <number> <URL>
+adm <URL>                      # Default: 4 segments
+adm -s 8 <URL>                 # 8 parallel segments
+adm -o filename <URL>          # Custom output name
+adm -s 8 -o filename <URL>     # Both options
 ```
 
-#### With optional output filename flag
-
-```bash
-adm -o <filename> <URL>
-adm --output <filename> <URL>
-```
-
-#### With both flags
-```bash
-adm -s <number> -o <filename> <URL>
-adm --segment <number> --output <filename> <URL>
-```

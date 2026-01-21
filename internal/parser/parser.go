@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"fmt"
+	"errors"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -9,41 +9,54 @@ import (
 	"github.com/arpnghosh/adm/internal/downloader/http"
 )
 
-func ParseProtocol(rawURL string, segment int, fnameFlag string) error {
+var (
+	ErrEmptyURL            = errors.New("URL cannot be empty")
+	ErrMissingScheme       = errors.New("URL must start with http:// or https://")
+	ErrMissingHost         = errors.New("URL is missing host")
+	ErrMissingPath         = errors.New("URL is missing file path")
+	ErrUnsupportedProtocol = errors.New("unsupported protocol")
+)
+
+func ParseProtocol(rawURL string, segment int, filename string) error {
 	if rawURL == "" {
-		return fmt.Errorf("URL can not be empty")
+		return ErrEmptyURL
 	}
 
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("invalid URL, %w", err)
+		return err
 	}
 	if parsedURL.Scheme == "" {
-		return fmt.Errorf("invalid URL, must start with http:// or https://")
+		return ErrMissingScheme
 	}
 	if parsedURL.Host == "" {
-		return fmt.Errorf("invalid URL, missing Host")
+		return ErrMissingHost
 	}
 	if parsedURL.Path == "" {
-		return fmt.Errorf("invalid URL, missing file Path")
+		return ErrMissingPath
 	}
 
-	if fnameFlag == "" {
-		pathSlice := strings.Split(parsedURL.Path, "/")
-		fnameFlag = pathSlice[len(pathSlice)-1]
-		for {
-			ext := filepath.Ext(fnameFlag)
-			if ext == "" {
-				break
-			}
-			fnameFlag = strings.TrimSuffix(fnameFlag, ext)
-		}
+	if filename == "" {
+		filename = extractFileName(parsedURL.Path)
 	}
 
 	switch parsedURL.Scheme {
 	case "https", "http":
-		return httpdownload.DownloadFile(rawURL, segment, fnameFlag)
+		return httpdownload.DownloadFile(rawURL, segment, filename)
 	default:
-		return fmt.Errorf("Unsupported network protocol")
+		return ErrUnsupportedProtocol
 	}
+}
+
+func extractFileName(f string) string {
+	pathSlice := strings.Split(f, "/")
+	filename := pathSlice[len(pathSlice)-1]
+	for {
+		ext := filepath.Ext(filename)
+		if ext == "" {
+			break
+		}
+		filename = strings.TrimSuffix(filename, ext)
+	}
+	return filename
 }

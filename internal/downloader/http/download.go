@@ -9,8 +9,8 @@ import (
 	"syscall"
 )
 
-func DownloadFile(url string, segmentCount int, filename string) error {
-	client := newClient()
+func DownloadFile(url string, proxy string, segmentCount int, filename string) error {
+	client := newClient(proxy)
 
 	probe, err := Probe(client, url)
 	if err != nil {
